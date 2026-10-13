@@ -5685,7 +5685,11 @@ function mpLeiterVerbinden(){
     const neu=s.val()||{};
     const dazu=Object.keys(neu).filter(k=>!MP.anfragen[k]);
     MP.anfragen=neu;
-    if(dazu.length) toast(`${mpName(neu[dazu[0]])||'Jemand'} möchte deinem Raum beitreten.`); else mpRender();
+    if(dazu.length){
+      if(!UI.overlay&&!LIVE&&UI.screen==='spiel') UI.overlay=mpOverlayHtml;
+      try{ navigator.vibrate&&navigator.vibrate(200); }catch(e){}
+      toast(`${mpName(neu[dazu[0]])||'Jemand'} möchte beitreten. Mitspieler oder Zuschauer?`);
+    } else mpRender();
   }, fehler));
   MP.abos.push(MP.D.onValue(mpRef('mitglieder'), s=>{ MP.mitglieder=s.val()||{}; mpRender(); }, fehler));
   MP.abos.push(MP.D.onValue(mpRef('rollen'), s=>{ MP.rollen=s.val()||{}; mpRender(); }, fehler));
@@ -5750,11 +5754,22 @@ async function mpGastStart(){
   try{
     await mpFirebase();
     const drin=(await MP.D.get(mpRef(`mitglieder/${MP.uid}`))).exists();
+    if(drin&&(await MP.D.get(mpRef('leiter'))).val()===MP.uid) return mpEigenerRaum();
     if(drin) return mpGastAufgenommen();
     try{ MP.name=localStorage.getItem(NAME_KEY)||''; }catch(e){}
     MP.phase='name';
   }catch(e){ console.error(e); MP.phase='fehler'; MP.fehler=e.message||String(e); }
   render();
+}
+// Der Spielleiter hat seinen eigenen Link geöffnet: kein Gast, sondern zurück ins eigene Spiel als Spielleiter
+function mpEigenerRaum(){
+  const raum=MP.raum;
+  mpZuruecksetzen();
+  try{ history.replaceState(null,'',location.pathname); }catch(e){}
+  try{ localStorage.setItem(RAUM_KEY,raum); }catch(e){}
+  const st=ladeStand();
+  if(st.status==='ok'){ standUebernehmen(st.daten); UI.screen='spiel'; UI.tab='spieltag'; UI.sub='planung'; render(); mpLeiterAuto(); toast('Das ist dein eigener Raum. Du bist der Spielleiter.'); }
+  else { UI.screen='start'; render(); toast('Das ist dein eigener Raum. Öffne dein Spiel mit „Weiterspielen“.'); }
 }
 async function mpBeitreten(){
   const feld=document.querySelector('[data-c=mpName]'); if(feld) MP.name=feld.value;
@@ -5999,7 +6014,8 @@ function mpOverlayHtml(){
     <button class="btn voll" data-a="mpOeffnen">Raum öffnen</button>`;
   else {
     const anf=Object.entries(MP.anfragen), mit=Object.entries(MP.mitglieder).filter(([u])=>u!==MP.uid);
-    inhalt=`<div class="qrbox">${qrSvg(mpLink())}</div>
+    inhalt=`${anf.length?`<div class="wegbox" style="background:rgba(255,180,74,.12);border-color:var(--gold)"><b>${anf.length===1?'1 Person wartet':anf.length+' Personen warten'} auf Aufnahme</b><span class="hinweis" style="color:var(--tinte)">Unten bei „Wartet auf Aufnahme“ Mitspieler, Zuschauer oder Ablehnen wählen.</span></div>`:''}
+      <div class="qrbox">${qrSvg(mpLink())}</div>
       <span class="hinweis" style="text-align:center">Mit der Handy-Kamera scannen</span>
       <div class="reihe"><input readonly value="${h(mpLink())}" class="f1" style="min-width:0;font-size:12px" aria-label="Link zum Raum"><button class="btn klein" data-a="mpKopieren">Link kopieren</button></div>
       <span class="lab" style="margin-top:6px">Wartet auf Aufnahme</span>
