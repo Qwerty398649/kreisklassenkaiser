@@ -1810,7 +1810,9 @@ function leihAngebote(c,tl){
   let ligen=W.ligen.map((D,i)=>i).filter(i=>{ const D=W.ligen[i]; return !D.keineLiga&&D.land===land&&D.niveau>n&&D.niveau<=n+2; });
   if(!ligen.length) ligen=[c.liga];
   const pool=ligen.flatMap(i=>S.ligen[i]).filter(id=>id!==c.id&&S.clubs[id].human<0);
-  const opts=shuffle([...pool]).slice(0,2).map(id=>{ const k=S.clubs[id]; return {club:id, stamm:tl.staerke>=k.basis-X.stammAb}; });
+  // Fester Startwert: Handy und Spielleiter bekommen dieselben Leih-Angebote
+  const alt=RNG; RNG=seedRng(((S.saison*7307)^(S.termin*1543)^(tl.id*92821))>>>0);
+  let opts; try{ opts=shuffle([...pool].sort((a,b)=>a-b)).slice(0,2).map(id=>{ const k=S.clubs[id]; return {club:id, stamm:tl.staerke>=k.basis-X.stammAb}; }); } finally { RNG=alt; }
   tl.leihOpts=opts; tl.leihOptsKey=key; return opts;
 }
 function ausleihen(c,tid,clubId){
@@ -1819,7 +1821,7 @@ function ausleihen(c,tid,clubId){
   if(!fensterOffen()) return 'Ausleihen nur im Transferfenster (Sommer- oder Winterpause).';
   if(tl.leihe) return `${tl.name} ist schon verliehen.`;
   if(c.jugend.filter(x=>x.leihe).length>=X.max) return `Höchstens ${X.max} Talente gleichzeitig verleihen.`;
-  const o=(tl.leihOpts||[]).find(x=>x.club===clubId); if(!o) return 'Angebot nicht mehr gültig.';
+  const o=leihAngebote(c,tl).find(x=>x.club===clubId); if(!o) return 'Angebot nicht mehr gültig.';
   tl.leihe={club:clubId, stamm:o.stamm, spiele:0, tore:0, start:tl.staerke, saison:S.saison};
   delete tl.leihOpts; delete tl.leihOptsKey; return null;
 }
@@ -3503,7 +3505,7 @@ function speicherBoxHtml(){
   return `<span class="lab" style="margin-top:6px">Speicher &amp; Sicherungen</span>${bel}
     <button class="btn" data-a="sicherungJetzt">Jetzt sichern</button>${sicherungenHtml()}`;
 }
-function toast(t){ UI.toast=t; render(); clearTimeout(toast._t); toast._t=setTimeout(()=>{ UI.toast=null; render(); },2800); }
+function toast(t){ if(typeof MP!=='undefined'&&(MP.replay||MP.trocken)){ MP.toasts.push(t); return; } UI.toast=t; render(); clearTimeout(toast._t); toast._t=setTimeout(()=>{ UI.toast=null; render(); },2800); }
 function fehler(e){ if(e) toast(e); else render(); }
 const istMensch = id => S.clubs[id].human>=0;
 const MGR_FARBEN=['#2f7de1','#e0457b','#f08c00','#8a4fd6','#12a17a','#d43c2f','#1d1f1a','#c9a227'];
@@ -3545,10 +3547,11 @@ function infoKnoepfe(root){
   }
 }
 function render(){
+  if(typeof MP!=='undefined'&&(MP.replay||MP.trocken)) return;
   let html='';
   if(UI.screen==='start') html=renderStart();
   else if(UI.screen==='setup') html=renderSetup();
-  else if(UI.screen==='spiel') html=renderSpiel();
+  else if(UI.screen==='spiel') html=mpEinstiegNoetig()?mpBand()+renderEinstieg():renderSpiel();
   else if(UI.screen==='beitritt') html=renderBeitritt();
   if(UI.toast) html+=`<div class="toast">${h(UI.toast)}</div>`;
   if(UI.overlay) html+=UI.overlay();
@@ -3687,7 +3690,7 @@ function renderSpiel(){
       <button class="top-knopf" data-a="hilfeBereich" aria-label="Hilfe zu diesem Bereich" title="Hilfe zu diesem Bereich">?</button>
       <button class="top-knopf" data-a="menu" aria-label="Menü" title="Menü">☰</button>
     </div>
-    ${mehr?`<div class="mgr">${S.manager.map((m,i)=>`<button class="${i===mi?'an':''}" style="--mf:${mgrFarbe(i)}" data-a="mgr" data-v="${i}" aria-pressed="${i===mi}">${mgrAva(i,24)}${h(m.name)}${m.bereit?' ✓':''}</button>`).join('')}</div>`:''}
+    ${mehr?`<div class="mgr">${S.manager.map((m,i)=>`<button class="${i===mi?'an':''}" style="--mf:${mgrFarbe(i)}" data-a="mgr" data-v="${i}" aria-pressed="${i===mi}">${mgrAva(i,24)}${h(m.name)}${m.online?' 📱':''}${m.bereit?' ✓':''}</button>`).join('')}</div>`:''}
   </header>`;
   let body;
   if(mg.wahl&&S.phase==='planung') return top+mpBand()+`<div class="inhalt">${renderWahl(mi)}</div>`;
@@ -5596,8 +5599,8 @@ const istPraesident = () => !S||!S.manager[S.aktiv]||!S.manager[S.aktiv].amt||S.
 function nurPraesident(name){ if(UI.screen==='spiel'&&NUR_CHEF.has(name)&&istCo()){ toast('Das entscheidet der Cheftrainer.'); render(); return true; }
   if(UI.screen==='spiel'&&NUR_TRAINER.has(name)&&istSd()){ toast('Aufstellung und Training macht der Cheftrainer.'); render(); return true; }
   if(UI.screen!=='spiel'||!NUR_PRAESIDENT.has(name)||istPraesident()) return false; toast('Das entscheidet der Vorstand. Nur als Präsident möglich.'); render(); return true; }
-document.addEventListener('click',e=>{ const el=e.target.closest('[data-a]'); if(!el) return; if(gastGesperrt(el.dataset.a)) return; if(nurPraesident(el.dataset.a)) return; const f=ACT[el.dataset.a]; if(f){ try{ f(el.dataset.v,el,e); }catch(err){ console.error(err); toast('Fehler: '+err.message); } } });
-document.addEventListener('change',e=>{ const el=e.target.closest('[data-c]'); if(!el) return; if(gastGesperrt(el.dataset.c,true)){ render(); return; } if(nurPraesident(el.dataset.c)) return; const f=CHG[el.dataset.c]; if(f){ try{ f(el); }catch(err){ console.error(err); toast('Fehler: '+err.message); } } });
+document.addEventListener('click',e=>{ const el=e.target.closest('[data-a]'); if(!el) return; if(gastGesperrt(el.dataset.a,false,el,e)) return; if(nurPraesident(el.dataset.a)) return; const f=ACT[el.dataset.a]; if(f){ try{ f(el.dataset.v,el,e); }catch(err){ console.error(err); toast('Fehler: '+err.message); } } });
+document.addEventListener('change',e=>{ const el=e.target.closest('[data-c]'); if(!el) return; if(gastGesperrt(el.dataset.c,true,el)) return; if(nurPraesident(el.dataset.c)) return; const f=CHG[el.dataset.c]; if(f){ try{ f(el); }catch(err){ console.error(err); toast('Fehler: '+err.message); } } });
 document.addEventListener('keydown',e=>{ if(UI.rg&&UI.overlay){ if(e.key==='ArrowRight') return ACT.rgSchritt(1); if(e.key==='ArrowLeft') return ACT.rgSchritt(-1); if(e.key==='Escape') return ACT.rgEnde(); } if((e.key==='Enter'||e.key===' ')&&e.target.matches&&e.target.matches('[role=button][data-a]')){ e.preventDefault(); e.target.click(); } });
 window.addEventListener('beforeunload',()=>{ if(S&&UI.screen==='spiel'&&!LIVE) speichern(); });
 </script>
@@ -5607,9 +5610,11 @@ window.addEventListener('beforeunload',()=>{ if(S&&UI.screen==='spiel'&&!LIVE) s
 var qrcode=function(){var t=function(t,r){var e=t,n=g[r],o=null,i=0,a=null,u=[],f={},c=function(t,r){o=function(t){for(var r=new Array(t),e=0;e<t;e+=1){r[e]=new Array(t);for(var n=0;n<t;n+=1)r[e][n]=null}return r}(i=4*e+17),l(0,0),l(i-7,0),l(0,i-7),s(),h(),d(t,r),e>=7&&v(t),null==a&&(a=p(e,n,u)),w(a,r)},l=function(t,r){for(var e=-1;e<=7;e+=1)if(!(t+e<=-1||i<=t+e))for(var n=-1;n<=7;n+=1)r+n<=-1||i<=r+n||(o[t+e][r+n]=0<=e&&e<=6&&(0==n||6==n)||0<=n&&n<=6&&(0==e||6==e)||2<=e&&e<=4&&2<=n&&n<=4)},h=function(){for(var t=8;t<i-8;t+=1)null==o[t][6]&&(o[t][6]=t%2==0);for(var r=8;r<i-8;r+=1)null==o[6][r]&&(o[6][r]=r%2==0)},s=function(){for(var t=B.getPatternPosition(e),r=0;r<t.length;r+=1)for(var n=0;n<t.length;n+=1){var i=t[r],a=t[n];if(null==o[i][a])for(var u=-2;u<=2;u+=1)for(var f=-2;f<=2;f+=1)o[i+u][a+f]=-2==u||2==u||-2==f||2==f||0==u&&0==f}},v=function(t){for(var r=B.getBCHTypeNumber(e),n=0;n<18;n+=1){var a=!t&&1==(r>>n&1);o[Math.floor(n/3)][n%3+i-8-3]=a}for(n=0;n<18;n+=1){a=!t&&1==(r>>n&1);o[n%3+i-8-3][Math.floor(n/3)]=a}},d=function(t,r){for(var e=n<<3|r,a=B.getBCHTypeInfo(e),u=0;u<15;u+=1){var f=!t&&1==(a>>u&1);u<6?o[u][8]=f:u<8?o[u+1][8]=f:o[i-15+u][8]=f}for(u=0;u<15;u+=1){f=!t&&1==(a>>u&1);u<8?o[8][i-u-1]=f:u<9?o[8][15-u-1+1]=f:o[8][15-u-1]=f}o[i-8][8]=!t},w=function(t,r){for(var e=-1,n=i-1,a=7,u=0,f=B.getMaskFunction(r),c=i-1;c>0;c-=2)for(6==c&&(c-=1);;){for(var g=0;g<2;g+=1)if(null==o[n][c-g]){var l=!1;u<t.length&&(l=1==(t[u]>>>a&1)),f(n,c-g)&&(l=!l),o[n][c-g]=l,-1==(a-=1)&&(u+=1,a=7)}if((n+=e)<0||i<=n){n-=e,e=-e;break}}},p=function(t,r,e){for(var n=A.getRSBlocks(t,r),o=b(),i=0;i<e.length;i+=1){var a=e[i];o.put(a.getMode(),4),o.put(a.getLength(),B.getLengthInBits(a.getMode(),t)),a.write(o)}var u=0;for(i=0;i<n.length;i+=1)u+=n[i].dataCount;if(o.getLengthInBits()>8*u)throw"code length overflow. ("+o.getLengthInBits()+">"+8*u+")";for(o.getLengthInBits()+4<=8*u&&o.put(0,4);o.getLengthInBits()%8!=0;)o.putBit(!1);for(;!(o.getLengthInBits()>=8*u||(o.put(236,8),o.getLengthInBits()>=8*u));)o.put(17,8);return function(t,r){for(var e=0,n=0,o=0,i=new Array(r.length),a=new Array(r.length),u=0;u<r.length;u+=1){var f=r[u].dataCount,c=r[u].totalCount-f;n=Math.max(n,f),o=Math.max(o,c),i[u]=new Array(f);for(var g=0;g<i[u].length;g+=1)i[u][g]=255&t.getBuffer()[g+e];e+=f;var l=B.getErrorCorrectPolynomial(c),h=k(i[u],l.getLength()-1).mod(l);for(a[u]=new Array(l.getLength()-1),g=0;g<a[u].length;g+=1){var s=g+h.getLength()-a[u].length;a[u][g]=s>=0?h.getAt(s):0}}var v=0;for(g=0;g<r.length;g+=1)v+=r[g].totalCount;var d=new Array(v),w=0;for(g=0;g<n;g+=1)for(u=0;u<r.length;u+=1)g<i[u].length&&(d[w]=i[u][g],w+=1);for(g=0;g<o;g+=1)for(u=0;u<r.length;u+=1)g<a[u].length&&(d[w]=a[u][g],w+=1);return d}(o,n)};f.addData=function(t,r){var e=null;switch(r=r||"Byte"){case"Numeric":e=M(t);break;case"Alphanumeric":e=x(t);break;case"Byte":e=m(t);break;case"Kanji":e=L(t);break;default:throw"mode:"+r}u.push(e),a=null},f.isDark=function(t,r){if(t<0||i<=t||r<0||i<=r)throw t+","+r;return o[t][r]},f.getModuleCount=function(){return i},f.make=function(){if(e<1){for(var t=1;t<40;t++){for(var r=A.getRSBlocks(t,n),o=b(),i=0;i<u.length;i++){var a=u[i];o.put(a.getMode(),4),o.put(a.getLength(),B.getLengthInBits(a.getMode(),t)),a.write(o)}var g=0;for(i=0;i<r.length;i++)g+=r[i].dataCount;if(o.getLengthInBits()<=8*g)break}e=t}c(!1,function(){for(var t=0,r=0,e=0;e<8;e+=1){c(!0,e);var n=B.getLostPoint(f);(0==e||t>n)&&(t=n,r=e)}return r}())},f.createTableTag=function(t,r){t=t||2;var e="";e+='<table style="',e+=" border-width: 0px; border-style: none;",e+=" border-collapse: collapse;",e+=" padding: 0px; margin: "+(r=void 0===r?4*t:r)+"px;",e+='">',e+="<tbody>";for(var n=0;n<f.getModuleCount();n+=1){e+="<tr>";for(var o=0;o<f.getModuleCount();o+=1)e+='<td style="',e+=" border-width: 0px; border-style: none;",e+=" border-collapse: collapse;",e+=" padding: 0px; margin: 0px;",e+=" width: "+t+"px;",e+=" height: "+t+"px;",e+=" background-color: ",e+=f.isDark(n,o)?"#000000":"#ffffff",e+=";",e+='"/>';e+="</tr>"}return e+="</tbody>",e+="</table>"},f.createSvgTag=function(t,r,e,n){var o={};"object"==typeof arguments[0]&&(t=(o=arguments[0]).cellSize,r=o.margin,e=o.alt,n=o.title),t=t||2,r=void 0===r?4*t:r,(e="string"==typeof e?{text:e}:e||{}).text=e.text||null,e.id=e.text?e.id||"qrcode-description":null,(n="string"==typeof n?{text:n}:n||{}).text=n.text||null,n.id=n.text?n.id||"qrcode-title":null;var i,a,u,c,g=f.getModuleCount()*t+2*r,l="";for(c="l"+t+",0 0,"+t+" -"+t+",0 0,-"+t+"z ",l+='<svg version="1.1" xmlns="http://www.w3.org/2000/svg"',l+=o.scalable?"":' width="'+g+'px" height="'+g+'px"',l+=' viewBox="0 0 '+g+" "+g+'" ',l+=' preserveAspectRatio="xMinYMin meet"',l+=n.text||e.text?' role="img" aria-labelledby="'+y([n.id,e.id].join(" ").trim())+'"':"",l+=">",l+=n.text?'<title id="'+y(n.id)+'">'+y(n.text)+"</title>":"",l+=e.text?'<description id="'+y(e.id)+'">'+y(e.text)+"</description>":"",l+='<rect width="100%" height="100%" fill="white" cx="0" cy="0"/>',l+='<path d="',a=0;a<f.getModuleCount();a+=1)for(u=a*t+r,i=0;i<f.getModuleCount();i+=1)f.isDark(a,i)&&(l+="M"+(i*t+r)+","+u+c);return l+='" stroke="transparent" fill="black"/>',l+="</svg>"},f.createDataURL=function(t,r){t=t||2,r=void 0===r?4*t:r;var e=f.getModuleCount()*t+2*r,n=r,o=e-r;return I(e,e,function(r,e){if(n<=r&&r<o&&n<=e&&e<o){var i=Math.floor((r-n)/t),a=Math.floor((e-n)/t);return f.isDark(a,i)?0:1}return 1})},f.createImgTag=function(t,r,e){t=t||2,r=void 0===r?4*t:r;var n=f.getModuleCount()*t+2*r,o="";return o+="<img",o+=' src="',o+=f.createDataURL(t,r),o+='"',o+=' width="',o+=n,o+='"',o+=' height="',o+=n,o+='"',e&&(o+=' alt="',o+=y(e),o+='"'),o+="/>"};var y=function(t){for(var r="",e=0;e<t.length;e+=1){var n=t.charAt(e);switch(n){case"<":r+="&lt;";break;case">":r+="&gt;";break;case"&":r+="&amp;";break;case'"':r+="&quot;";break;default:r+=n}}return r};return f.createASCII=function(t,r){if((t=t||1)<2)return function(t){t=void 0===t?2:t;var r,e,n,o,i,a=1*f.getModuleCount()+2*t,u=t,c=a-t,g={"██":"█","█ ":"▀"," █":"▄","  ":" "},l={"██":"▀","█ ":"▀"," █":" ","  ":" "},h="";for(r=0;r<a;r+=2){for(n=Math.floor((r-u)/1),o=Math.floor((r+1-u)/1),e=0;e<a;e+=1)i="█",u<=e&&e<c&&u<=r&&r<c&&f.isDark(n,Math.floor((e-u)/1))&&(i=" "),u<=e&&e<c&&u<=r+1&&r+1<c&&f.isDark(o,Math.floor((e-u)/1))?i+=" ":i+="█",h+=t<1&&r+1>=c?l[i]:g[i];h+="\n"}return a%2&&t>0?h.substring(0,h.length-a-1)+Array(a+1).join("▀"):h.substring(0,h.length-1)}(r);t-=1,r=void 0===r?2*t:r;var e,n,o,i,a=f.getModuleCount()*t+2*r,u=r,c=a-r,g=Array(t+1).join("██"),l=Array(t+1).join("  "),h="",s="";for(e=0;e<a;e+=1){for(o=Math.floor((e-u)/t),s="",n=0;n<a;n+=1)i=1,u<=n&&n<c&&u<=e&&e<c&&f.isDark(o,Math.floor((n-u)/t))&&(i=0),s+=i?g:l;for(o=0;o<t;o+=1)h+=s+"\n"}return h.substring(0,h.length-1)},f.renderTo2dContext=function(t,r){r=r||2;for(var e=f.getModuleCount(),n=0;n<e;n++)for(var o=0;o<e;o++)t.fillStyle=f.isDark(n,o)?"black":"white",t.fillRect(o*r,n*r,r,r)},f};t.stringToBytes=(t.stringToBytesFuncs={default:function(t){for(var r=[],e=0;e<t.length;e+=1){var n=t.charCodeAt(e);r.push(255&n)}return r}}).default,t.createStringToBytes=function(t,r){var e=function(){for(var e=S(t),n=function(){var t=e.read();if(-1==t)throw"eof";return t},o=0,i={};;){var a=e.read();if(-1==a)break;var u=n(),f=n()<<8|n();i[String.fromCharCode(a<<8|u)]=f,o+=1}if(o!=r)throw o+" != "+r;return i}(),n="?".charCodeAt(0);return function(t){for(var r=[],o=0;o<t.length;o+=1){var i=t.charCodeAt(o);if(i<128)r.push(i);else{var a=e[t.charAt(o)];"number"==typeof a?(255&a)==a?r.push(a):(r.push(a>>>8),r.push(255&a)):r.push(n)}}return r}};var r,e,n,o,i,a=1,u=2,f=4,c=8,g={L:1,M:0,Q:3,H:2},l=0,h=1,s=2,v=3,d=4,w=5,p=6,y=7,B=(r=[[],[6,18],[6,22],[6,26],[6,30],[6,34],[6,22,38],[6,24,42],[6,26,46],[6,28,50],[6,30,54],[6,32,58],[6,34,62],[6,26,46,66],[6,26,48,70],[6,26,50,74],[6,30,54,78],[6,30,56,82],[6,30,58,86],[6,34,62,90],[6,28,50,72,94],[6,26,50,74,98],[6,30,54,78,102],[6,28,54,80,106],[6,32,58,84,110],[6,30,58,86,114],[6,34,62,90,118],[6,26,50,74,98,122],[6,30,54,78,102,126],[6,26,52,78,104,130],[6,30,56,82,108,134],[6,34,60,86,112,138],[6,30,58,86,114,142],[6,34,62,90,118,146],[6,30,54,78,102,126,150],[6,24,50,76,102,128,154],[6,28,54,80,106,132,158],[6,32,58,84,110,136,162],[6,26,54,82,110,138,166],[6,30,58,86,114,142,170]],e=1335,n=7973,i=function(t){for(var r=0;0!=t;)r+=1,t>>>=1;return r},(o={}).getBCHTypeInfo=function(t){for(var r=t<<10;i(r)-i(e)>=0;)r^=e<<i(r)-i(e);return 21522^(t<<10|r)},o.getBCHTypeNumber=function(t){for(var r=t<<12;i(r)-i(n)>=0;)r^=n<<i(r)-i(n);return t<<12|r},o.getPatternPosition=function(t){return r[t-1]},o.getMaskFunction=function(t){switch(t){case l:return function(t,r){return(t+r)%2==0};case h:return function(t,r){return t%2==0};case s:return function(t,r){return r%3==0};case v:return function(t,r){return(t+r)%3==0};case d:return function(t,r){return(Math.floor(t/2)+Math.floor(r/3))%2==0};case w:return function(t,r){return t*r%2+t*r%3==0};case p:return function(t,r){return(t*r%2+t*r%3)%2==0};case y:return function(t,r){return(t*r%3+(t+r)%2)%2==0};default:throw"bad maskPattern:"+t}},o.getErrorCorrectPolynomial=function(t){for(var r=k([1],0),e=0;e<t;e+=1)r=r.multiply(k([1,C.gexp(e)],0));return r},o.getLengthInBits=function(t,r){if(1<=r&&r<10)switch(t){case a:return 10;case u:return 9;case f:case c:return 8;default:throw"mode:"+t}else if(r<27)switch(t){case a:return 12;case u:return 11;case f:return 16;case c:return 10;default:throw"mode:"+t}else{if(!(r<41))throw"type:"+r;switch(t){case a:return 14;case u:return 13;case f:return 16;case c:return 12;default:throw"mode:"+t}}},o.getLostPoint=function(t){for(var r=t.getModuleCount(),e=0,n=0;n<r;n+=1)for(var o=0;o<r;o+=1){for(var i=0,a=t.isDark(n,o),u=-1;u<=1;u+=1)if(!(n+u<0||r<=n+u))for(var f=-1;f<=1;f+=1)o+f<0||r<=o+f||0==u&&0==f||a==t.isDark(n+u,o+f)&&(i+=1);i>5&&(e+=3+i-5)}for(n=0;n<r-1;n+=1)for(o=0;o<r-1;o+=1){var c=0;t.isDark(n,o)&&(c+=1),t.isDark(n+1,o)&&(c+=1),t.isDark(n,o+1)&&(c+=1),t.isDark(n+1,o+1)&&(c+=1),0!=c&&4!=c||(e+=3)}for(n=0;n<r;n+=1)for(o=0;o<r-6;o+=1)t.isDark(n,o)&&!t.isDark(n,o+1)&&t.isDark(n,o+2)&&t.isDark(n,o+3)&&t.isDark(n,o+4)&&!t.isDark(n,o+5)&&t.isDark(n,o+6)&&(e+=40);for(o=0;o<r;o+=1)for(n=0;n<r-6;n+=1)t.isDark(n,o)&&!t.isDark(n+1,o)&&t.isDark(n+2,o)&&t.isDark(n+3,o)&&t.isDark(n+4,o)&&!t.isDark(n+5,o)&&t.isDark(n+6,o)&&(e+=40);var g=0;for(o=0;o<r;o+=1)for(n=0;n<r;n+=1)t.isDark(n,o)&&(g+=1);return e+=Math.abs(100*g/r/r-50)/5*10},o),C=function(){for(var t=new Array(256),r=new Array(256),e=0;e<8;e+=1)t[e]=1<<e;for(e=8;e<256;e+=1)t[e]=t[e-4]^t[e-5]^t[e-6]^t[e-8];for(e=0;e<255;e+=1)r[t[e]]=e;var n={glog:function(t){if(t<1)throw"glog("+t+")";return r[t]},gexp:function(r){for(;r<0;)r+=255;for(;r>=256;)r-=255;return t[r]}};return n}();function k(t,r){if(void 0===t.length)throw t.length+"/"+r;var e=function(){for(var e=0;e<t.length&&0==t[e];)e+=1;for(var n=new Array(t.length-e+r),o=0;o<t.length-e;o+=1)n[o]=t[o+e];return n}(),n={getAt:function(t){return e[t]},getLength:function(){return e.length},multiply:function(t){for(var r=new Array(n.getLength()+t.getLength()-1),e=0;e<n.getLength();e+=1)for(var o=0;o<t.getLength();o+=1)r[e+o]^=C.gexp(C.glog(n.getAt(e))+C.glog(t.getAt(o)));return k(r,0)},mod:function(t){if(n.getLength()-t.getLength()<0)return n;for(var r=C.glog(n.getAt(0))-C.glog(t.getAt(0)),e=new Array(n.getLength()),o=0;o<n.getLength();o+=1)e[o]=n.getAt(o);for(o=0;o<t.getLength();o+=1)e[o]^=C.gexp(C.glog(t.getAt(o))+r);return k(e,0).mod(t)}};return n}var A=function(){var t=[[1,26,19],[1,26,16],[1,26,13],[1,26,9],[1,44,34],[1,44,28],[1,44,22],[1,44,16],[1,70,55],[1,70,44],[2,35,17],[2,35,13],[1,100,80],[2,50,32],[2,50,24],[4,25,9],[1,134,108],[2,67,43],[2,33,15,2,34,16],[2,33,11,2,34,12],[2,86,68],[4,43,27],[4,43,19],[4,43,15],[2,98,78],[4,49,31],[2,32,14,4,33,15],[4,39,13,1,40,14],[2,121,97],[2,60,38,2,61,39],[4,40,18,2,41,19],[4,40,14,2,41,15],[2,146,116],[3,58,36,2,59,37],[4,36,16,4,37,17],[4,36,12,4,37,13],[2,86,68,2,87,69],[4,69,43,1,70,44],[6,43,19,2,44,20],[6,43,15,2,44,16],[4,101,81],[1,80,50,4,81,51],[4,50,22,4,51,23],[3,36,12,8,37,13],[2,116,92,2,117,93],[6,58,36,2,59,37],[4,46,20,6,47,21],[7,42,14,4,43,15],[4,133,107],[8,59,37,1,60,38],[8,44,20,4,45,21],[12,33,11,4,34,12],[3,145,115,1,146,116],[4,64,40,5,65,41],[11,36,16,5,37,17],[11,36,12,5,37,13],[5,109,87,1,110,88],[5,65,41,5,66,42],[5,54,24,7,55,25],[11,36,12,7,37,13],[5,122,98,1,123,99],[7,73,45,3,74,46],[15,43,19,2,44,20],[3,45,15,13,46,16],[1,135,107,5,136,108],[10,74,46,1,75,47],[1,50,22,15,51,23],[2,42,14,17,43,15],[5,150,120,1,151,121],[9,69,43,4,70,44],[17,50,22,1,51,23],[2,42,14,19,43,15],[3,141,113,4,142,114],[3,70,44,11,71,45],[17,47,21,4,48,22],[9,39,13,16,40,14],[3,135,107,5,136,108],[3,67,41,13,68,42],[15,54,24,5,55,25],[15,43,15,10,44,16],[4,144,116,4,145,117],[17,68,42],[17,50,22,6,51,23],[19,46,16,6,47,17],[2,139,111,7,140,112],[17,74,46],[7,54,24,16,55,25],[34,37,13],[4,151,121,5,152,122],[4,75,47,14,76,48],[11,54,24,14,55,25],[16,45,15,14,46,16],[6,147,117,4,148,118],[6,73,45,14,74,46],[11,54,24,16,55,25],[30,46,16,2,47,17],[8,132,106,4,133,107],[8,75,47,13,76,48],[7,54,24,22,55,25],[22,45,15,13,46,16],[10,142,114,2,143,115],[19,74,46,4,75,47],[28,50,22,6,51,23],[33,46,16,4,47,17],[8,152,122,4,153,123],[22,73,45,3,74,46],[8,53,23,26,54,24],[12,45,15,28,46,16],[3,147,117,10,148,118],[3,73,45,23,74,46],[4,54,24,31,55,25],[11,45,15,31,46,16],[7,146,116,7,147,117],[21,73,45,7,74,46],[1,53,23,37,54,24],[19,45,15,26,46,16],[5,145,115,10,146,116],[19,75,47,10,76,48],[15,54,24,25,55,25],[23,45,15,25,46,16],[13,145,115,3,146,116],[2,74,46,29,75,47],[42,54,24,1,55,25],[23,45,15,28,46,16],[17,145,115],[10,74,46,23,75,47],[10,54,24,35,55,25],[19,45,15,35,46,16],[17,145,115,1,146,116],[14,74,46,21,75,47],[29,54,24,19,55,25],[11,45,15,46,46,16],[13,145,115,6,146,116],[14,74,46,23,75,47],[44,54,24,7,55,25],[59,46,16,1,47,17],[12,151,121,7,152,122],[12,75,47,26,76,48],[39,54,24,14,55,25],[22,45,15,41,46,16],[6,151,121,14,152,122],[6,75,47,34,76,48],[46,54,24,10,55,25],[2,45,15,64,46,16],[17,152,122,4,153,123],[29,74,46,14,75,47],[49,54,24,10,55,25],[24,45,15,46,46,16],[4,152,122,18,153,123],[13,74,46,32,75,47],[48,54,24,14,55,25],[42,45,15,32,46,16],[20,147,117,4,148,118],[40,75,47,7,76,48],[43,54,24,22,55,25],[10,45,15,67,46,16],[19,148,118,6,149,119],[18,75,47,31,76,48],[34,54,24,34,55,25],[20,45,15,61,46,16]],r=function(t,r){var e={};return e.totalCount=t,e.dataCount=r,e},e={};return e.getRSBlocks=function(e,n){var o=function(r,e){switch(e){case g.L:return t[4*(r-1)+0];case g.M:return t[4*(r-1)+1];case g.Q:return t[4*(r-1)+2];case g.H:return t[4*(r-1)+3];default:return}}(e,n);if(void 0===o)throw"bad rs block @ typeNumber:"+e+"/errorCorrectionLevel:"+n;for(var i=o.length/3,a=[],u=0;u<i;u+=1)for(var f=o[3*u+0],c=o[3*u+1],l=o[3*u+2],h=0;h<f;h+=1)a.push(r(c,l));return a},e}(),b=function(){var t=[],r=0,e={getBuffer:function(){return t},getAt:function(r){var e=Math.floor(r/8);return 1==(t[e]>>>7-r%8&1)},put:function(t,r){for(var n=0;n<r;n+=1)e.putBit(1==(t>>>r-n-1&1))},getLengthInBits:function(){return r},putBit:function(e){var n=Math.floor(r/8);t.length<=n&&t.push(0),e&&(t[n]|=128>>>r%8),r+=1}};return e},M=function(t){var r=a,e=t,n={getMode:function(){return r},getLength:function(t){return e.length},write:function(t){for(var r=e,n=0;n+2<r.length;)t.put(o(r.substring(n,n+3)),10),n+=3;n<r.length&&(r.length-n==1?t.put(o(r.substring(n,n+1)),4):r.length-n==2&&t.put(o(r.substring(n,n+2)),7))}},o=function(t){for(var r=0,e=0;e<t.length;e+=1)r=10*r+i(t.charAt(e));return r},i=function(t){if("0"<=t&&t<="9")return t.charCodeAt(0)-"0".charCodeAt(0);throw"illegal char :"+t};return n},x=function(t){var r=u,e=t,n={getMode:function(){return r},getLength:function(t){return e.length},write:function(t){for(var r=e,n=0;n+1<r.length;)t.put(45*o(r.charAt(n))+o(r.charAt(n+1)),11),n+=2;n<r.length&&t.put(o(r.charAt(n)),6)}},o=function(t){if("0"<=t&&t<="9")return t.charCodeAt(0)-"0".charCodeAt(0);if("A"<=t&&t<="Z")return t.charCodeAt(0)-"A".charCodeAt(0)+10;switch(t){case" ":return 36;case"$":return 37;case"%":return 38;case"*":return 39;case"+":return 40;case"-":return 41;case".":return 42;case"/":return 43;case":":return 44;default:throw"illegal char :"+t}};return n},m=function(r){var e=f,n=t.stringToBytes(r),o={getMode:function(){return e},getLength:function(t){return n.length},write:function(t){for(var r=0;r<n.length;r+=1)t.put(n[r],8)}};return o},L=function(r){var e=c,n=t.stringToBytesFuncs.SJIS;if(!n)throw"sjis not supported.";!function(){var t=n("友");if(2!=t.length||38726!=(t[0]<<8|t[1]))throw"sjis not supported."}();var o=n(r),i={getMode:function(){return e},getLength:function(t){return~~(o.length/2)},write:function(t){for(var r=o,e=0;e+1<r.length;){var n=(255&r[e])<<8|255&r[e+1];if(33088<=n&&n<=40956)n-=33088;else{if(!(57408<=n&&n<=60351))throw"illegal char at "+(e+1)+"/"+n;n-=49472}n=192*(n>>>8&255)+(255&n),t.put(n,13),e+=2}if(e<r.length)throw"illegal char at "+(e+1)}};return i},D=function(){var t=[],r={writeByte:function(r){t.push(255&r)},writeShort:function(t){r.writeByte(t),r.writeByte(t>>>8)},writeBytes:function(t,e,n){e=e||0,n=n||t.length;for(var o=0;o<n;o+=1)r.writeByte(t[o+e])},writeString:function(t){for(var e=0;e<t.length;e+=1)r.writeByte(t.charCodeAt(e))},toByteArray:function(){return t},toString:function(){var r="";r+="[";for(var e=0;e<t.length;e+=1)e>0&&(r+=","),r+=t[e];return r+="]"}};return r},S=function(t){var r=t,e=0,n=0,o=0,i={read:function(){for(;o<8;){if(e>=r.length){if(0==o)return-1;throw"unexpected end of file./"+o}var t=r.charAt(e);if(e+=1,"="==t)return o=0,-1;t.match(/^\s$/)||(n=n<<6|a(t.charCodeAt(0)),o+=6)}var i=n>>>o-8&255;return o-=8,i}},a=function(t){if(65<=t&&t<=90)return t-65;if(97<=t&&t<=122)return t-97+26;if(48<=t&&t<=57)return t-48+52;if(43==t)return 62;if(47==t)return 63;throw"c:"+t};return i},I=function(t,r,e){for(var n=function(t,r){var e=t,n=r,o=new Array(t*r),i={setPixel:function(t,r,n){o[r*e+t]=n},write:function(t){t.writeString("GIF87a"),t.writeShort(e),t.writeShort(n),t.writeByte(128),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(0),t.writeByte(255),t.writeByte(255),t.writeByte(255),t.writeString(","),t.writeShort(0),t.writeShort(0),t.writeShort(e),t.writeShort(n),t.writeByte(0);var r=a(2);t.writeByte(2);for(var o=0;r.length-o>255;)t.writeByte(255),t.writeBytes(r,o,255),o+=255;t.writeByte(r.length-o),t.writeBytes(r,o,r.length-o),t.writeByte(0),t.writeString(";")}},a=function(t){for(var r=1<<t,e=1+(1<<t),n=t+1,i=u(),a=0;a<r;a+=1)i.add(String.fromCharCode(a));i.add(String.fromCharCode(r)),i.add(String.fromCharCode(e));var f,c,g,l=D(),h=(f=l,c=0,g=0,{write:function(t,r){if(t>>>r!=0)throw"length over";for(;c+r>=8;)f.writeByte(255&(t<<c|g)),r-=8-c,t>>>=8-c,g=0,c=0;g|=t<<c,c+=r},flush:function(){c>0&&f.writeByte(g)}});h.write(r,n);var s=0,v=String.fromCharCode(o[s]);for(s+=1;s<o.length;){var d=String.fromCharCode(o[s]);s+=1,i.contains(v+d)?v+=d:(h.write(i.indexOf(v),n),i.size()<4095&&(i.size()==1<<n&&(n+=1),i.add(v+d)),v=d)}return h.write(i.indexOf(v),n),h.write(e,n),h.flush(),l.toByteArray()},u=function(){var t={},r=0,e={add:function(n){if(e.contains(n))throw"dup key:"+n;t[n]=r,r+=1},size:function(){return r},indexOf:function(r){return t[r]},contains:function(r){return void 0!==t[r]}};return e};return i}(t,r),o=0;o<r;o+=1)for(var i=0;i<t;i+=1)n.setPixel(i,o,e(i,o));var a=D();n.write(a);for(var u=function(){var t=0,r=0,e=0,n="",o={},i=function(t){n+=String.fromCharCode(a(63&t))},a=function(t){if(t<0);else{if(t<26)return 65+t;if(t<52)return t-26+97;if(t<62)return t-52+48;if(62==t)return 43;if(63==t)return 47}throw"n:"+t};return o.writeByte=function(n){for(t=t<<8|255&n,r+=8,e+=1;r>=6;)i(t>>>r-6),r-=6},o.flush=function(){if(r>0&&(i(t<<6-r),t=0,r=0),e%3!=0)for(var o=3-e%3,a=0;a<o;a+=1)n+="="},o.toString=function(){return n},o}(),f=a.toByteArray(),c=0;c<f.length;c+=1)u.writeByte(f[c]);return u.flush(),"data:image/gif;base64,"+u};return t}();qrcode.stringToBytesFuncs["UTF-8"]=function(t){return function(t){for(var r=[],e=0;e<t.length;e++){var n=t.charCodeAt(e);n<128?r.push(n):n<2048?r.push(192|n>>6,128|63&n):n<55296||n>=57344?r.push(224|n>>12,128|n>>6&63,128|63&n):(e++,n=65536+((1023&n)<<10|1023&t.charCodeAt(e)),r.push(240|n>>18,128|n>>12&63,128|n>>6&63,128|63&n))}return r}(t)},function(t){"function"==typeof define&&define.amd?define([],t):"object"==typeof exports&&(module.exports=t())}(function(){return qrcode});
 </script>
 <script id="mehrspieler">
-// ================= MEHRSPIELER (Etappe 1: Raum, QR-Code, Beitreten, Zuschauen) =================
+// ================= MEHRSPIELER (Etappe 1+2: Raum, QR-Code, Zuschauer und Mitspieler auf Handys) =================
 // Der Spielleiter rechnet und speichert wie bisher lokal und schickt nach jedem Speichern den Stand in den Raum.
-// Gäste sehen den Stand nur an; ihr eigener lokaler Spielstand wird dabei nie überschrieben.
+// Mitspieler planen auf dem Handy: Anzeige-Aktionen laufen dort, alles, was den Spielstand ändert, wird als Aktion
+// an den Spielleiter geschickt und dort mit dem Verein des Mitspielers ausgeführt. Der eigene lokale Spielstand
+// eines Handys wird dabei nie überschrieben.
 // Die Firebase-Web-Konfiguration ist kein Geheimnis: Geschützt wird über die Datenbank-Regeln.
 const FIREBASE_CONFIG = {
   apiKey: "AIzaSyB_EuHuhTXpd3JIEazGAywV1rdBmxR8N4U",
@@ -5624,7 +5629,9 @@ const FB_VERSION = '13.0.0';
 const RAUM_RE = /^[A-Za-z0-9]{24}$/;
 const RAUM_KEY = 'kk_raum', NAME_KEY = 'kk_spitzname';
 const MP = { rolle:null, raum:null, uid:null, D:null, db:null, abos:[], anfragen:{}, mitglieder:{}, rev:0, timer:null,
-  phase:null, fehler:null, name:'', gesendet:null, sendeFehler:null, standZeit:null, verbinde:false };
+  phase:null, fehler:null, name:'', gesendet:null, sendeFehler:null, standZeit:null, verbinde:false,
+  rollen:{}, gastRolle:null, offen:0, erledigt:new Set(), schlange:[], nr:0, antwortId:null, ein:null, einGesendet:false,
+  replay:false, trocken:false, toasts:[] };
 
 function mpOnlineMoeglich(){ return location.protocol==='https:' || ['localhost','127.0.0.1'].includes(location.hostname); }
 async function mpFirebase(){
@@ -5643,7 +5650,7 @@ async function mpFirebase(){
 const mpRef = p => MP.D.ref(MP.db, `raeume/${MP.raum}${p?'/'+p:''}`);
 const mpVerweigert = e => /permission/i.test(String(e&&(e.code||e.message)));
 function mpAbmelden(){ for(const f of MP.abos){ try{ f(); }catch(e){} } MP.abos=[]; clearTimeout(MP.timer); }
-function mpZuruecksetzen(){ mpAbmelden(); Object.assign(MP,{rolle:null,raum:null,anfragen:{},mitglieder:{},phase:null,fehler:null,gesendet:null,sendeFehler:null,standZeit:null,verbinde:false}); UI.gast=false; }
+function mpZuruecksetzen(){ mpAbmelden(); Object.assign(MP,{rolle:null,raum:null,anfragen:{},mitglieder:{},phase:null,fehler:null,gesendet:null,sendeFehler:null,standZeit:null,verbinde:false,rollen:{},gastRolle:null,offen:0,schlange:[],antwortId:null,ein:null,einGesendet:false}); MP.erledigt.clear(); UI.gast=false; }
 function neueRaumId(){
   const z='ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789', out=[], buf=new Uint8Array(64);
   while(out.length<24){ crypto.getRandomValues(buf); for(const x of buf){ if(x<248&&out.length<24) out.push(z[x%62]); } }
@@ -5654,24 +5661,9 @@ const mpName = s => String(s||'').replace(/[\u0000-\u001f<>]/g,'').trim().slice(
 function mpRender(){ if(UI.screen==='spiel'||UI.screen==='beitritt') render(); }
 
 // ---------- Spielleiter ----------
-// Stand gepackt (gzip + Base64) schicken: ca. ein Zehntel der Datenmenge, schont die mobilen Daten der Handys.
-async function packen(text){
-  if(typeof CompressionStream!=='function') return text;
-  const roh=new Uint8Array(await new Response(new Blob([text]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer());
-  let bin=''; for(let i=0;i<roh.length;i+=0x8000) bin+=String.fromCharCode.apply(null,roh.subarray(i,i+0x8000));
-  return 'gz:'+btoa(bin);
-}
-async function entpacken(text){
-  if(!text.startsWith('gz:')) return text;
-  if(typeof DecompressionStream!=='function') throw new Error('Dieser Browser ist zu alt für den Raum.');
-  const bin=atob(text.slice(3)), roh=new Uint8Array(bin.length);
-  for(let i=0;i<bin.length;i++) roh[i]=bin.charCodeAt(i);
-  return await new Response(new Blob([roh]).stream().pipeThrough(new DecompressionStream('gzip'))).text();
-}
-async function standPaket(){
-  const json=await packen(JSON.stringify(S,(k,v)=>k==='foto'?undefined:v));
+function standPaket(){
   MP.rev++;
-  return { json, rev:MP.rev, zeit:MP.D.serverTimestamp() };
+  return { json:JSON.stringify(S,(k,v)=>k==='foto'?undefined:v), rev:MP.rev, zeit:MP.D.serverTimestamp() };
 }
 async function mpRaumOeffnen(){
   if(!S) return toast('Erst ein Spiel starten oder fortsetzen.');
@@ -5679,7 +5671,7 @@ async function mpRaumOeffnen(){
   try{
     await mpFirebase();
     MP.raum=neueRaumId();
-    await MP.D.update(mpRef(''), { leiter:MP.uid, [`mitglieder/${MP.uid}`]:'Spielleiter', stand:await standPaket() });
+    await MP.D.update(mpRef(''), { leiter:MP.uid, [`mitglieder/${MP.uid}`]:'Spielleiter', stand:standPaket() });
     try{ localStorage.setItem(RAUM_KEY,MP.raum); }catch(e){}
     MP.gesendet=Date.now();
     mpLeiterVerbinden();
@@ -5696,6 +5688,16 @@ function mpLeiterVerbinden(){
     if(dazu.length) toast(`${mpName(neu[dazu[0]])||'Jemand'} möchte deinem Raum beitreten.`); else mpRender();
   }, fehler));
   MP.abos.push(MP.D.onValue(mpRef('mitglieder'), s=>{ MP.mitglieder=s.val()||{}; mpRender(); }, fehler));
+  MP.abos.push(MP.D.onValue(mpRef('rollen'), s=>{ MP.rollen=s.val()||{}; mpRender(); }, fehler));
+  MP.abos.push(MP.D.onValue(mpRef('aktionen'), s=>{
+    const alle=s.val()||{};
+    for(const [uid,liste] of Object.entries(alle)) for(const [id,json] of Object.entries(liste||{})){
+      const key=uid+'/'+id; if(MP.erledigt.has(key)) continue;
+      MP.erledigt.add(key); MP.schlange.push({uid,id,json});
+    }
+    MP.schlange.sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0);
+    mpVerarbeiten();
+  }, fehler));
 }
 // Nach einem Neuladen: Raum vom letzten Mal wieder aufnehmen
 async function mpLeiterAuto(){
@@ -5717,21 +5719,23 @@ function mpSenden(ms=1200){
   if(MP.rolle!=='leiter'||!MP.raum||!S) return;
   clearTimeout(MP.timer);
   MP.timer=setTimeout(async()=>{
-    try{ await MP.D.set(mpRef('stand'),await standPaket()); MP.gesendet=Date.now(); MP.sendeFehler=null; }
+    try{ await MP.D.set(mpRef('stand'),standPaket()); MP.gesendet=Date.now(); MP.sendeFehler=null; }
     catch(e){ console.error(e); MP.sendeFehler='Der Spielstand konnte nicht in den Raum geschickt werden.'; mpRender(); }
   },ms);
 }
-function mpNachSpeichern(){ mpSenden(); }
-async function mpAufnehmen(uid){
+function mpNachSpeichern(){ mpSenden(); if(!MP.replay) setTimeout(mpVerarbeiten); }
+async function mpAufnehmen(uid,rolle){
   const name=mpName(MP.anfragen[uid]); if(!name) return;
-  try{ await MP.D.update(mpRef(''),{[`mitglieder/${uid}`]:name,[`anfragen/${uid}`]:null}); toast(`${name} ist im Raum.`); }
+  if(rolle!=='mitspieler') rolle='zuschauer';
+  try{ await MP.D.update(mpRef(''),{[`mitglieder/${uid}`]:name,[`rollen/${uid}`]:rolle,[`anfragen/${uid}`]:null});
+    toast(rolle==='mitspieler'?`${name} ist im Raum und sucht sich jetzt einen Verein aus.`:`${name} schaut jetzt zu.`); }
   catch(e){ console.error(e); toast('Aufnehmen hat nicht geklappt.'); }
 }
 async function mpAblehnen(uid){ try{ await MP.D.remove(mpRef(`anfragen/${uid}`)); }catch(e){ console.error(e); toast('Ablehnen hat nicht geklappt.'); } }
 async function mpEntfernen(uid){
   if(uid===MP.uid) return;
   if(!confirm(`${mpName(MP.mitglieder[uid])} aus dem Raum nehmen?`)) return;
-  try{ await MP.D.remove(mpRef(`mitglieder/${uid}`)); }catch(e){ console.error(e); toast('Entfernen hat nicht geklappt.'); }
+  try{ await MP.D.update(mpRef(''),{[`mitglieder/${uid}`]:null,[`rollen/${uid}`]:null}); }catch(e){ console.error(e); toast('Entfernen hat nicht geklappt.'); }
 }
 async function mpRaumSchliessen(){
   if(!confirm('Raum schließen? Alle Handys verlieren die Verbindung, der Stand im Netz wird gelöscht. Dein Spiel hier bleibt erhalten.')) return;
@@ -5773,15 +5777,23 @@ async function mpBeitreten(){
 }
 function mpGastAufgenommen(){
   mpAbmelden(); MP.phase='drin'; MP.rolle='gast'; render();
-  MP.abos.push(MP.D.onValue(mpRef('stand'), async s=>{
+  MP.abos.push(MP.D.onValue(mpRef(`rollen/${MP.uid}`), s=>{ MP.gastRolle=s.val()==='mitspieler'?'mitspieler':'zuschauer'; if(UI.gast) render(); }, ()=>{}));
+  MP.abos.push(MP.D.onValue(mpRef(`antworten/${MP.uid}`), s=>{
+    let a=null; try{ a=s.val()&&JSON.parse(s.val()); }catch(e){}
+    if(!a||a.id===MP.antwortId) return;
+    const erst=MP.antwortId===null; MP.antwortId=a.id;
+    if(erst&&!MP.offen) return;
+    MP.offen=Math.max(0,MP.offen-1);
+    toast((a.toasts||[]).filter(Boolean).join(' ')||'Erledigt.');
+  }, ()=>{}));
+  MP.abos.push(MP.D.onValue(mpRef('stand'), s=>{
     const v=s.val(); if(!v||typeof v.json!=='string') return;
-    const nr=MP.empfang=(MP.empfang||0)+1;
-    let text=null; try{ text=await entpacken(v.json); }catch(e){ console.error(e); }
-    if(nr!==MP.empfang||MP.phase!=='drin') return;
-    let d=null; try{ d=text&&migrieren(JSON.parse(text)); }catch(e){ console.error(e); }
+    let d=null; try{ d=migrieren(JSON.parse(v.json)); }catch(e){ console.error(e); }
     if(!d){ MP.fehler='Der Spielstand im Raum ist nicht lesbar. Läuft bei allen dieselbe Spielversion?'; return render(); }
     const aktiv=UI.gast&&S?S.aktiv:0;
     S=d; S.aktiv=Math.min(aktiv,S.manager.length-1); UI.gast=true; MP.standZeit=Date.now(); MP.fehler=null;
+    const ich=eigenerMi(); if(ich>=0){ S.aktiv=ich; MP.einGesendet=false; }
+    if(UI.sel!=null&&!(S.manager[S.aktiv]&&mc(S.aktiv).kader.some(p=>p.id===UI.sel))) UI.sel=null;
     if(LIVE){ clearTimeout(LIVE.t); LIVE=null; }
     if(UI.screen!=='spiel'){ UI.screen='spiel'; UI.tab='spieltag'; UI.sub='planung'; UI.overlay=null; }
     render();
@@ -5800,6 +5812,165 @@ async function mpVerlassen(){
   render();
 }
 
+// ---------- Mitspieler: Verein auswählen und einsteigen ----------
+const eigenerMi = () => S&&MP.uid ? S.manager.findIndex(m=>m.online===MP.uid) : -1;
+const mpEinstiegNoetig = () => UI.gast&&S&&MP.gastRolle==='mitspieler'&&eigenerMi()<0;
+// Läuft beim Spielleiter: fügt eine Person mitten im Spiel hinzu. Rückgabe: Fehlertext oder null.
+function managerHinzufuegen(uid,d){
+  if(!S) return 'Beim Spielleiter läuft gerade kein Spiel.';
+  if(S.manager.some(m=>m.online===uid)) return 'Du hast schon einen Verein.';
+  if(S.manager.length>=MGR_FARBEN.length) return `Höchstens ${MGR_FARBEN.length} Personen.`;
+  d=d||{};
+  const liga=Number(d.liga), D=W.ligen[liga];
+  if(!D||!D.spielbar||D.keineLiga) return 'Diese Liga gibt es nicht.';
+  const hc=W.handicap[d.handicap]?d.handicap:'Normal', name=mpName(d.name)||'Gast';
+  let c;
+  if(d.gruenden){
+    const vn=String(d.vereinsname||'').replace(/[<>]/g,'').trim().slice(0,40); if(!vn) return 'Bitte einen Vereinsnamen eingeben.';
+    const frei=S.ligen[liga].filter(id=>S.clubs[id].human<0); if(!frei.length) return 'In dieser Liga ist kein Platz frei.';
+    c=S.clubs[pick(frei)];
+    c.name=vn; c.kurz=(String(d.kurz||'').replace(/[^\p{L}0-9]/gu,'').toUpperCase().slice(0,3)||kuerzel(vn));
+    if(farbeOk(d.farbe)) c.farbe=d.farbe; if(farbeOk(d.farbe2)) c.farbe2=d.farbe2; if(WAPPEN.includes(d.wappen)) c.wappen=d.wappen;
+    c.land=L(c).land;
+  } else {
+    c=S.clubs[Number(d.verein)];
+    if(!c||c.liga!==liga) return 'Bitte einen Verein aus der Liste wählen.';
+    if(c.human>=0) return 'Diesen Verein spielt schon jemand.';
+  }
+  const mi=S.manager.length;
+  menschlichMachen(c,mi,hc,!!d.gruenden);
+  const mg={ name, club:c.id, handicap:hc, auto:{...W.handicap[hc].auto}, amt:neuesAmt(c), bereit:false,
+    farbe:farbeOk(d.mfarbe)?d.mfarbe:MGR_FARBEN[mi%MGR_FARBEN.length], foto:null, online:uid };
+  S.manager.push(mg);
+  karriereInit(mg,c); amtSaisonStart(mi); museum(c);
+  if(mg.auto.training) autoTraining(c);
+  S.stellen=(S.stellen||[]).filter(s=>s.club!==c.id);
+  c.meldung=`${name} übernimmt ${c.name}. Willkommen!`;
+  return null;
+}
+function mpEinstiegStart(){
+  const frei=MGR_FARBEN.find(f=>!S.manager.some(m=>m.farbe===f))||MGR_FARBEN[0];
+  MP.ein={ name:MP.name||'', handicap:'Normal', liga:startLiga(), gruenden:true, verein:'', vereinsname:'', kurz:'', farbe:'#2b4a8a', farbe2:'#ffffff', wappen:'schild', mfarbe:frei };
+}
+function renderEinstieg(){
+  if(!MP.ein) mpEinstiegStart();
+  const E=MP.ein, frei=S.ligen[E.liga]?S.ligen[E.liga].filter(id=>S.clubs[id].human<0):[];
+  if(MP.einGesendet) return `<div class="inhalt"><div class="box"><span class="lab">Einsteigen</span><b>Dein Verein wird eingerichtet …</b><span class="hinweis">Der Spielleiter muss das Spiel dafür offen haben.</span></div></div>`;
+  return `<div class="inhalt"><div class="box" style="max-width:560px">
+    <span class="lab">Mitspielen</span><div class="d" style="font-size:30px">Dein Verein</div>
+    <span class="hinweis" style="color:var(--tinte)">Du steigst in Saison ${S.saison} ein${S.termin?`, Termin ${S.termin}`:''}. Der Verein startet mit seinem aktuellen Tabellenplatz.</span>
+    <div class="sp"><span class="lab">Dein Name im Spiel</span><input value="${h(E.name)}" maxlength="20" data-c="mpE" data-v="name"></div>
+    <div class="sp"><span class="lab">Deine Farbe</span><div class="farbwahl">${MGR_FARBEN.map(f=>`<button class="${E.mfarbe===f?'an':''}" style="background:${f}" data-a="mpESet" data-v="mfarbe|${f}" aria-label="Farbe ${f}"></button>`).join('')}</div></div>
+    <div class="sp"><span class="lab">Handicap</span><div class="seg" style="grid-template-columns:repeat(3,1fr)">${Object.keys(W.handicap).map(k=>`<button class="${E.handicap===k?'an':''}" data-a="mpESet" data-v="handicap|${k}">${k}</button>`).join('')}</div></div>
+    <div class="sp"><span class="lab">Liga</span><select data-c="mpE" data-v="liga">${ligaOptionen(E.liga,true)}</select></div>
+    <div class="seg" style="grid-template-columns:1fr 1fr"><button class="${!E.gruenden?'an':''}" data-a="mpESet" data-v="gruenden|0">Übernehmen</button><button class="${E.gruenden?'an':''}" data-a="mpESet" data-v="gruenden|1">Gründen</button></div>
+    ${E.gruenden?`<div class="sp"><span class="lab">Vereinsname</span><input value="${h(E.vereinsname)}" maxlength="40" data-c="mpE" data-v="vereinsname"></div>
+      <div class="reihe" style="align-items:flex-end"><div class="sp" style="width:84px"><span class="lab">Kürzel</span><input maxlength="3" value="${h(E.kurz)}" data-c="mpE" data-v="kurz"></div>
+      <div class="sp"><span class="lab">Farbe 1</span><input type="color" value="${h(E.farbe)}" data-c="mpE" data-v="farbe"></div><div class="sp"><span class="lab">Farbe 2</span><input type="color" value="${h(E.farbe2)}" data-c="mpE" data-v="farbe2"></div></div>
+      <div class="reihe">${WAPPEN.map(w=>`<button data-a="mpESet" data-v="wappen|${w}" style="padding:6px;border:${E.wappen===w?'3px solid var(--tinte)':'1px solid var(--linie)'};background:var(--hell)">${wappen({farbe:E.farbe,farbe2:E.farbe2,wappen:w},28)}</button>`).join('')}</div>
+      <span class="hinweis">Ersetzt einen Verein der ${h(W.ligen[E.liga].name)} mit dessen Platz in der Tabelle. Der Kader wird neu erstellt.</span>`
+    :`<div class="sp"><span class="lab">Verein</span><select data-c="mpE" data-v="verein"><option value="">– wählen –</option>${frei.map(id=>{ const c=S.clubs[id], p=platzVon(c); return `<option value="${id}" ${String(E.verein)===String(id)?'selected':''}>${h(c.name)}${p?` · Platz ${p}`:''} · Ø ${staerke(c)}</option>`; }).join('')}</select></div>`}
+    <button class="btn voll gross" data-a="mpEinsteigen">Einsteigen</button>
+    <button class="btn klein" data-a="mpVerlassen" style="align-self:flex-start">Raum verlassen</button></div></div>`;
+}
+let mpAktionNr=0;
+async function mpAktionSenden(msg){
+  const id=String(Date.now()).padStart(14,'0')+String(++mpAktionNr%1000).padStart(3,'0');
+  MP.offen++;
+  try{ await MP.D.set(mpRef(`aktionen/${MP.uid}/${id}`),JSON.stringify(msg)); }
+  catch(e){ console.error(e); MP.offen=Math.max(0,MP.offen-1); toast('Senden hat nicht geklappt. Ist das Internet an?'); }
+  render();
+}
+
+// ---------- Aktionen der Handys ----------
+// Anzeige-Aktionen laufen auf dem Handy selbst. Alles andere ändert den Spielstand und wird beim Spielleiter ausgeführt.
+const GAST_LOKAL=new Set(['springe','bereich','reiter','alleRunden','kAlle','musDetail','pTauschen','umbenennenVerein','veWappen','leihMenue',
+  'stadionSel','erkl','blick','rundgang','rgSchritt','rgEnde','anlageSel','mFilter','hilfeBereich','menu','menuZu','hinterZu','hilfe','nRuecktritt',
+  'mpVerlassen','mpBeitreten','mpNochmal','mpESet','mpEinsteigen']);
+const GAST_LOKAL_CHG=new Set(['mQuelle','mLand','mMax','kLand','tabLiga','wb','ve','simStop','mpName','mpE']);
+const GAST_REMOTE=new Set(['bereit','wahlAnnehmen','sJa','sNein','vEntscheid','nBewerben','nAusrichtung','nRuecktrittJa','bewerbenSd','bewerbenCo',
+  'training','beobachten','geheim','konterUebernehmen','pGespraech','bewerben','kAnnehmen','kAblehnen','selSpieler','pBonus','bonusAlle','pStamm',
+  'pHalte','pVerkaufen','ausrichtung','autoElf','auto','verkaufen','umbenennenSpieler','veSpeichern','hochziehen','programm','internat','leihen',
+  'scoutHolen','scoutKauf','jtrainer','anlageBauen','fest','bauen','stand','bestellen','kampagne','angebot','kaufen','msAngebot','msAntwort','msGegen']);
+const GAST_REMOTE_CHG=new Set(['formation','ticket','preis','fokus']);
+// Gibt true zurück, wenn der normale Handler NICHT laufen soll.
+function gastGesperrt(name,chg,el,e){
+  if(!UI.gast) return false;
+  const mitspieler=MP.gastRolle==='mitspieler'&&eigenerMi()>=0;
+  if(!chg&&name==='spielerMenue'){ if(UI.sel==null) return false; name='selSpieler'; }
+  if(!chg&&name==='selSpieler'&&(UI.sel==null||String(UI.sel)===String(el&&el.dataset.v))) return false;
+  if(!chg&&name==='mgr'){ if(!mitspieler) return false; toast('Du spielst mit deinem eigenen Verein.'); return true; }
+  if(chg?GAST_LOKAL_CHG.has(name):GAST_LOKAL.has(name)) return false;
+  if(chg?GAST_REMOTE_CHG.has(name):GAST_REMOTE.has(name)){
+    if(!mitspieler){ toast(MP.gastRolle==='mitspieler'?'Such dir zuerst einen Verein aus.':'Du schaust nur zu.'); if(chg) render(); return true; }
+    if(!chg&&nurPraesident(name)) return true;
+    mpGastRemote(name,chg,el,e); return true;
+  }
+  toast(['anpfiff','losgehts','sim','weiter'].includes(name)?'Das macht der Spielleiter.':'Das geht nur beim Spielleiter.');
+  if(chg) render();
+  return true;
+}
+// Probelauf auf einer Kopie: holt Rückfragen (Bestätigen, Betrag) beim Handy ab und setzt Anzeige-Zustand (z. B. Fenster zu).
+function mpGastRemote(name,chg,el,e){
+  const ui={sel:UI.sel, vereinEdit:UI.vereinEdit?{...UI.vereinEdit}:null, spielerId:UI.spielerId??null, leihId:UI.leihId??null};
+  const f=chg?{value:el.value, checked:!!el.checked, v:el.dataset.v??null, type:el.type||''}:null;
+  const echt=S, antw=[], oc=window.confirm, op=window.prompt; let abbruch=false;
+  window.confirm=t=>{ const r=oc.call(window,t); antw.push(r); if(!r) abbruch=true; return r; };
+  window.prompt=(t,d)=>{ const r=op.call(window,t,d); antw.push(r); if(r==null) abbruch=true; return r; };
+  S=typeof structuredClone==='function'?structuredClone(S):JSON.parse(JSON.stringify(S)); MP.trocken=true;
+  try{ chg?CHG[name](el):ACT[name](el.dataset.v,el,e); }catch(err){ console.error(err); }
+  finally{ S=echt; MP.trocken=false; MP.toasts=[]; window.confirm=oc; window.prompt=op; }
+  if(abbruch){ render(); return; }
+  mpAktionSenden(chg?{c:name,f,ui,antw}:{a:name,v:el.dataset.v??null,ui,antw});
+}
+// Läuft beim Spielleiter: Aktion mit dem Verein des Mitspielers ausführen, Meldungen einsammeln.
+function mpAktionAusfuehren(uid,msg){
+  if(msg.a==='mpEinsteigen'){ if(MP.rollen[uid]!=='mitspieler') return ['Der Spielleiter hat dich als Zuschauer aufgenommen.']; const f=managerHinzufuegen(uid,msg.d); return [f||'Willkommen im Spiel! Dein Verein ist eingerichtet.']; }
+  const mi=S.manager.findIndex(m=>m.online===uid);
+  if(mi<0) return ['Du hast noch keinen Verein.'];
+  if(MP.rollen[uid]==='zuschauer') return ['Du schaust nur zu.'];
+  const name=msg.a||msg.c;
+  if(msg.a?!GAST_REMOTE.has(name):!GAST_REMOTE_CHG.has(name)) return ['Das geht nur beim Spielleiter.'];
+  if(msg.a==='bereit'){ if(S.phase!=='planung') return ['Gerade wird nicht geplant.']; const m=S.manager[mi]; m.bereit=!m.bereit; return [m.bereit?'Du bist bereit. Der Spielleiter startet, sobald alle so weit sind.':'Bereit zurückgenommen.']; }
+  if((msg.a==='msAntwort'||msg.a==='msGegen')){ const id=Number(String(msg.v).split('|').pop()); const o=S.mitspielerAngebote.find(x=>x.id===id); if(!o||o.an!==mi) return ['Dieses Angebot ist nicht an dich.']; }
+  const uiAlt={...UI}, aktivAlt=S.aktiv, oc=window.confirm, op=window.prompt, os=window.scrollTo, antw=[...(msg.antw||[])];
+  MP.replay=true; MP.toasts=[];
+  window.confirm=()=>antw.length?!!antw.shift():true;
+  window.prompt=()=>antw.length?antw.shift():null;
+  window.scrollTo=()=>{};
+  const u=msg.ui||{};
+  Object.assign(UI,{sel:u.sel??null, vereinEdit:u.vereinEdit||null, spielerId:u.spielerId??null, leihId:u.leihId??null, overlay:null});
+  S.aktiv=mi;
+  try{
+    if(!(msg.a&&nurPraesident(name))){
+      if(msg.a) ACT[name](msg.v, {dataset:{v:msg.v}, closest:()=>null}, {target:null});
+      else { const f=msg.f||{}; CHG[name]({value:String(f.value??''), checked:!!f.checked, type:f.type||'', dataset:{v:f.v}}); }
+    }
+  }catch(err){ console.error(err); MP.toasts.push('Fehler: '+err.message); }
+  finally{
+    for(const k of Object.keys(UI)) if(!(k in uiAlt)) delete UI[k];
+    Object.assign(UI,uiAlt); S.aktiv=aktivAlt; MP.replay=false;
+    window.confirm=oc; window.prompt=op; window.scrollTo=os;
+  }
+  const t=MP.toasts; MP.toasts=[]; return t;
+}
+let mpArbeitet=false;
+async function mpVerarbeiten(){
+  if(mpArbeitet||MP.rolle!=='leiter'||!MP.schlange.length||!S||UI.screen!=='spiel'||LIVE||UI.simLaeuft) return;
+  mpArbeitet=true;
+  try{
+    while(MP.schlange.length&&!LIVE&&!UI.simLaeuft){
+      const {uid,id,json}=MP.schlange.shift();
+      let msg=null; try{ msg=JSON.parse(json); }catch(e){}
+      const toasts=msg?mpAktionAusfuehren(uid,msg):['Die Aktion war nicht lesbar.'];
+      const wer=S.manager.find(m=>m.online===uid);
+      if(msg&&msg.a==='bereit'&&wer) toast(`${wer.name} ${wer.bereit?'ist bereit.':'plant doch noch.'}`);
+      try{ await MP.D.update(mpRef(''),{[`aktionen/${uid}/${id}`]:null,[`antworten/${uid}`]:JSON.stringify({id,toasts:toasts.slice(0,4).map(x=>String(x).slice(0,300))})}); }catch(e){ console.error(e); }
+    }
+    speichern(); render();
+  } finally { mpArbeitet=false; }
+}
+
 // ---------- Darstellung ----------
 function qrSvg(text){
   const q=qrcode(0,'M'); q.addData(text); q.make();
@@ -5809,7 +5980,10 @@ function qrSvg(text){
 }
 const zeitKurz = t => t?new Date(t).toLocaleTimeString('de-DE',{hour:'2-digit',minute:'2-digit'}):'–';
 function mpBand(){
-  if(UI.gast) return `<div class="mp-band gast"><span class="f1">👀 <b>Zuschauen</b> im Raum · Stand von ${zeitKurz(MP.standZeit)}${MP.fehler?` · <span class="rotx">${h(MP.fehler)}</span>`:''}</span><button class="btn klein" data-a="mpVerlassen">Verlassen</button></div>`;
+  if(UI.gast){
+    const mit=MP.gastRolle==='mitspieler'&&eigenerMi()>=0, laeuft=S&&S.laufend;
+    return `<div class="mp-band gast"><span class="f1">${mit?'📱 <b>Du spielst mit</b>':'👀 <b>Zuschauen</b>'} · Stand von ${zeitKurz(MP.standZeit)}${laeuft?' · ⚽ Der Spielleiter spielt gerade den Termin':''}${MP.offen?` · ⏳ ${MP.offen} unterwegs`:''}${MP.fehler?` · <span class="rotx">${h(MP.fehler)}</span>`:''}</span><button class="btn klein" data-a="mpVerlassen">Verlassen</button></div>`;
+  }
   if(MP.rolle==='leiter'){
     const wartend=Object.keys(MP.anfragen).length, handys=Object.keys(MP.mitglieder).length-1;
     return `<div class="mp-band${wartend?' warn':''}"><span class="f1">📡 Raum offen · ${handys} ${handys===1?'Handy':'Handys'}${wartend?` · <b>${wartend} ${wartend===1?'wartet':'warten'}</b>`:''}${MP.sendeFehler?` · <span class="rotx">${h(MP.sendeFehler)}</span>`:''}</span><button class="btn klein" data-a="mpOverlay">${wartend?'Aufnehmen':'QR-Code'}</button></div>`;
@@ -5821,7 +5995,7 @@ function mpOverlayHtml(){
   if(!mpOnlineMoeglich()) inhalt=`<span class="hinweis" style="color:var(--tinte)">Mehrspieler geht nur, wenn das Spiel über die Online-Adresse geöffnet ist (…github.io/kreisklassenkaiser). Mit einer Datei vom PC klappt die Verbindung nicht.</span>`;
   else if(MP.verbinde) inhalt='<span class="hinweis">Verbinde mit dem Online-Dienst …</span>';
   else if(MP.rolle!=='leiter') inhalt=`<span class="hinweis" style="color:var(--tinte)">Öffne einen Raum. Die anderen scannen den QR-Code mit der Kamera ihres Handys und sehen deinen Spielstand. Du nimmst jeden einzeln auf.</span>
-    <ul class="hinweis" style="margin:0;padding-left:18px;color:var(--tinte)"><li>Im Netz liegen nur der Spielstand und die Spitznamen, keine Fotos.</li><li>Dieses Gerät bleibt der Spielleiter und rechnet alle Spiele.</li><li>Einstellen auf den Handys kommt in Etappe 2, jetzt können sie zuschauen.</li></ul>
+    <ul class="hinweis" style="margin:0;padding-left:18px;color:var(--tinte)"><li>Im Netz liegen nur der Spielstand und die Spitznamen, keine Fotos.</li><li>Dieses Gerät bleibt der Spielleiter und rechnet alle Spiele.</li><li>Mitspieler bekommen einen eigenen Verein und planen auf dem Handy. Gespielt wird auf diesem Gerät, sobald alle „Bereit“ gedrückt haben.</li></ul>
     <button class="btn voll" data-a="mpOeffnen">Raum öffnen</button>`;
   else {
     const anf=Object.entries(MP.anfragen), mit=Object.entries(MP.mitglieder).filter(([u])=>u!==MP.uid);
@@ -5829,9 +6003,11 @@ function mpOverlayHtml(){
       <span class="hinweis" style="text-align:center">Mit der Handy-Kamera scannen</span>
       <div class="reihe"><input readonly value="${h(mpLink())}" class="f1" style="min-width:0;font-size:12px" aria-label="Link zum Raum"><button class="btn klein" data-a="mpKopieren">Link kopieren</button></div>
       <span class="lab" style="margin-top:6px">Wartet auf Aufnahme</span>
-      ${anf.length?anf.map(([u,n])=>`<div class="zeile"><b class="f1">${h(mpName(n))}</b><button class="btn klein voll" data-a="mpAufnehmen" data-v="${h(u)}">Aufnehmen</button><button class="btn klein" data-a="mpAblehnen" data-v="${h(u)}">Ablehnen</button></div>`).join(''):'<span class="hinweis">Niemand. Wer den Code scannt, erscheint hier.</span>'}
+      ${anf.length?anf.map(([u,n])=>`<div class="zeile" style="flex-wrap:wrap"><b class="f1">${h(mpName(n))}</b><button class="btn klein voll" data-a="mpAufnehmen" data-v="${h(u)}|mitspieler">Mitspieler</button><button class="btn klein" data-a="mpAufnehmen" data-v="${h(u)}|zuschauer">Zuschauer</button><button class="btn klein" data-a="mpAblehnen" data-v="${h(u)}">Ablehnen</button></div>`).join(''):'<span class="hinweis">Niemand. Wer den Code scannt, erscheint hier.</span>'}
+      <span class="hinweis">Mitspieler suchen sich auf dem Handy einen Verein aus und planen dort selbst. Zuschauer sehen nur zu.</span>
       <span class="lab" style="margin-top:6px">Im Raum</span>
-      ${mit.length?mit.map(([u,n])=>`<div class="zeile"><span class="f1">📱 ${h(mpName(n))}</span><button class="btn klein" data-a="mpEntfernen" data-v="${h(u)}">Entfernen</button></div>`).join(''):'<span class="hinweis">Noch niemand außer dir.</span>'}
+      ${mit.length?mit.map(([u,n])=>{ const mg=S&&S.manager.find(m=>m.online===u), r=MP.rollen[u];
+        return `<div class="zeile"><span class="f1">📱 <b>${h(mpName(n))}</b><br><span class="hinweis">${r==='mitspieler'?(mg?`spielt ${h(S.clubs[mg.club].name)}`:'sucht sich einen Verein aus'):'schaut zu'}</span></span><button class="btn klein" data-a="mpEntfernen" data-v="${h(u)}">Entfernen</button></div>`; }).join(''):'<span class="hinweis">Noch niemand außer dir.</span>'}
       <span class="hinweis">Zuletzt gesendet: ${zeitKurz(MP.gesendet)}${MP.sendeFehler?` · <span class="rotx">${h(MP.sendeFehler)}</span>`:''}</span>
       <button class="btn rot klein" data-a="mpSchliessen" style="align-self:flex-start">Raum schließen</button>`;
   }
@@ -5853,12 +6029,6 @@ function renderBeitritt(){
 }
 
 // ---------- Anbindung an Oberfläche ----------
-const GAST_OK=new Set(['bereich','reiter','mgr','springe','hilfe','hilfeBereich','menu','menuZu','hinterZu','stadionSel','blick','erkl','rundgang','rgSchritt','rgEnde','anlageSel','musDetail','alleRunden','kAlle','mFilter','spielerMenue','mpVerlassen','mpBeitreten','mpNochmal']);
-const GAST_CHG=new Set(['tabLiga','wb','kLand','mQuelle','mLand','mMax','mpName']);
-function gastGesperrt(name,chg){
-  if(!UI.gast||(chg?GAST_CHG:GAST_OK).has(name)) return false;
-  toast('Du schaust zu. Einstellen auf dem Handy kommt mit Etappe 2.'); return true;
-}
 {
   const altMenu=ACT.menu, altFort=ACT.fortsetzen, altStart=ACT.spielStarten;
   Object.assign(ACT,{
@@ -5869,15 +6039,23 @@ function gastGesperrt(name,chg){
     mpOverlay(){ UI.overlay=mpOverlayHtml; render(); },
     mpOeffnen(){ mpRaumOeffnen(); },
     mpKopieren(){ navigator.clipboard.writeText(mpLink()).then(()=>toast('Link kopiert.'),()=>toast('Kopieren nicht möglich. Link bitte von Hand markieren.')); },
-    mpAufnehmen(v){ mpAufnehmen(v); },
+    mpAufnehmen(v){ const [u,r]=String(v).split('|'); mpAufnehmen(u,r); },
     mpAblehnen(v){ mpAblehnen(v); },
     mpEntfernen(v){ mpEntfernen(v); },
     mpSchliessen(){ mpRaumSchliessen(); },
     mpBeitreten(){ mpBeitreten(); },
     mpNochmal(){ mpAbmelden(); MP.phase=null; mpGastStart(); },
-    mpVerlassen(){ mpVerlassen(); }
+    mpVerlassen(){ mpVerlassen(); },
+    mpESet(v){ const [k,x]=String(v).split('|'); if(!MP.ein) mpEinstiegStart(); if(k==='gruenden') MP.ein.gruenden=x==='1'; else MP.ein[k]=x; render(); },
+    mpEinsteigen(){ if(!MP.ein) return; const E={...MP.ein};
+      for(const el of document.querySelectorAll('[data-c=mpE]')) E[el.dataset.v]=el.value;
+      if(!mpName(E.name)) return toast('Bitte einen Namen eingeben.');
+      if(E.gruenden&&!String(E.vereinsname).trim()) return toast('Bitte einen Vereinsnamen eingeben.');
+      if(!E.gruenden&&E.verein==='') return toast('Bitte einen Verein auswählen.');
+      MP.ein=E; MP.einGesendet=true; mpAktionSenden({a:'mpEinsteigen',d:E}); }
   });
-  Object.assign(CHG,{ mpName(el){ MP.name=el.value; } });
+  Object.assign(CHG,{ mpName(el){ MP.name=el.value; },
+    mpE(el){ if(!MP.ein) mpEinstiegStart(); const k=el.dataset.v; MP.ein[k]=k==='liga'?Number(el.value):el.value; if(k==='liga'){ MP.ein.verein=''; render(); } } });
 }
 // Start: Mit ?raum=… im Link als Gast beitreten, sonst normal
 {
