@@ -103,6 +103,16 @@ table.tab td.r,table.tab th.r{text-align:right}
 .spieler.sel .kreis{border-color:var(--gold);background:var(--gold)}
 .spieler .nm{font-size:11px;font-weight:700;color:var(--papier);white-space:nowrap;text-shadow:0 1px 2px rgba(0,0,0,.5)}
 .konf{position:fixed;inset:0;background:var(--tinte);color:var(--papier);overflow:auto;z-index:20}
+.emoLeiste{position:fixed;left:0;right:0;bottom:0;z-index:21;display:flex;justify-content:center;gap:6px;padding:8px 8px calc(8px + env(safe-area-inset-bottom));background:rgba(11,16,32,.92);border-top:1px solid rgba(255,255,255,.12)}
+.emoLeiste button{font-size:26px;line-height:1;width:48px;height:48px;border-radius:50%;border:1px solid rgba(255,255,255,.25);background:rgba(255,255,255,.06);cursor:pointer}
+.emoLeiste button:active{transform:scale(.9)}
+.konf.mitEmo .konfIn{padding-bottom:84px}
+#emoEbene{position:fixed;inset:0;pointer-events:none;z-index:60;overflow:hidden}
+.emoFlug{position:absolute;bottom:70px;display:flex;flex-direction:column;align-items:center;animation:emoFlug 2.6s ease-out forwards}
+.emoFlug b{font-size:64px;line-height:1;filter:drop-shadow(0 4px 8px rgba(0,0,0,.5))}
+.emoFlug span{font:700 13px system-ui,sans-serif;color:#fff;background:rgba(0,0,0,.55);padding:2px 8px;border-radius:10px;margin-top:4px;white-space:nowrap}
+@keyframes emoFlug{0%{transform:translateY(0) scale(.6);opacity:0}12%{transform:translateY(-40px) scale(1.15);opacity:1}75%{opacity:1}100%{transform:translateY(-55vh) scale(1);opacity:0}}
+@media (prefers-reduced-motion:reduce){.emoFlug{animation:emoStill 2.6s forwards;bottom:45vh}@keyframes emoStill{0%,80%{opacity:1}100%{opacity:0}}}
 .konfIn{max-width:1280px;margin:0 auto;padding:24px 28px;display:grid;grid-template-columns:1fr 340px;gap:24px}
 @media (max-width:900px){.konfIn{grid-template-columns:1fr;padding:16px}}
 .konf .seg button.an{background:var(--gold);color:var(--tinte)}
@@ -5281,6 +5291,11 @@ function livePanel(i,ms){
 }
 
 // ---------- Ablauf ----------
+const countdownHtml = n => `<div class="overlay"><div class="sp" style="align-items:center;gap:8px"><span class="lab" style="color:var(--papier)">Gleich geht's los</span><div class="d" style="font-size:160px;color:var(--gold)">${n}</div></div></div>`;
+// Wird im Mehrspieler-Teil ersetzt: schickt den Countdown an die Handys.
+let countdownMelden = () => {};
+// Zusätzliche Zahl beim Spielleiter, damit die Handys trotz Netz-Verzögerung gleichzeitig zählen.
+let countdownVorlauf = () => 0;
 // Wird im Mehrspieler-Teil verlängert, wenn Handys mitspielen (Netz-Verzögerung).
 let halbzeitDauer = () => W.halbzeitMs;
 function liveStarten(){
@@ -5439,8 +5454,8 @@ const ACT={
     if(!S.manager.every(m=>m.bereit)) return;
     for(let i=0;i<S.manager.length;i++){ const c=mc(i); if(S.manager[i].auto.aufstellung) c.aufstellung=autoAufstellung(c); }
     if(!menschImTermin()){ terminBerechnen(); return; }
-    let n=W.countdown; UI.overlay=()=>`<div class="overlay"><div class="d" style="font-size:160px;color:var(--gold)">${n}</div></div>`; render();
-    const t=setInterval(()=>{ n--; if(n<=0){ clearInterval(t); UI.overlay=null; render(); liveStarten(); } else render(); },1000);
+    let n=W.countdown+countdownVorlauf(); UI.overlay=()=>countdownHtml(n); render(); countdownMelden(n);
+    const t=setInterval(()=>{ n--; if(n<=0){ clearInterval(t); UI.overlay=null; render(); liveStarten(); } else { render(); countdownMelden(n); } },1000);
   },
   sim(v){ if(UI.simLaeuft) return;
     { const w=S.manager.findIndex(m=>m.wahl); if(w>=0){ S.aktiv=w; toast(`${S.manager[w].name} muss sich erst für einen neuen Verein entscheiden.`); return; } }
@@ -5716,6 +5731,7 @@ function mpLeiterVerbinden(){
       const key=uid+'/'+id; if(MP.erledigt.has(key)) continue;
       MP.erledigt.add(key);
       let msg=null; try{ msg=JSON.parse(json); }catch(e){}
+      if(msg&&msg.live==='emo'){ mpEmoVonHandy(uid,msg); MP.D.remove(mpRef(`aktionen/${uid}/${id}`)).catch(e=>console.error(e)); continue; }
       if(msg&&msg.live){ mpLiveAntworten(uid,id,mpLiveAktion(uid,msg)); continue; }
       MP.schlange.push({uid,id,json});
     }
@@ -5927,7 +5943,7 @@ async function mpAktionSenden(msg){
 // Anzeige-Aktionen laufen auf dem Handy selbst. Alles andere ändert den Spielstand und wird beim Spielleiter ausgeführt.
 const GAST_LOKAL=new Set(['springe','bereich','reiter','alleRunden','kAlle','musDetail','pTauschen','umbenennenVerein','veWappen','leihMenue',
   'stadionSel','erkl','blick','rundgang','rgSchritt','rgEnde','anlageSel','mFilter','hilfeBereich','menu','menuZu','hinterZu','hilfe','nRuecktritt',
-  'mpVerlassen','mpBeitreten','mpNochmal','mpESet','mpEinsteigen']);
+  'mpVerlassen','mpBeitreten','mpNochmal','mpESet','mpEinsteigen','emo']);
 const GAST_LOKAL_CHG=new Set(['hzRaus','hzRein','mQuelle','mLand','mMax','kLand','tabLiga','wb','ve','simStop','mpName','mpE']);
 const GAST_REMOTE=new Set(['bereit','wahlAnnehmen','sJa','sNein','vEntscheid','nBewerben','nAusrichtung','nRuecktrittJa','bewerbenSd','bewerbenCo',
   'training','beobachten','geheim','konterUebernehmen','pGespraech','bewerben','kAnnehmen','kAblehnen','selSpieler','pBonus','bonusAlle','pStamm',
@@ -6018,7 +6034,7 @@ async function mpVerarbeiten(){
 const LIVE_MS=450, LIVE_EV=12;
 function livePaket(){
   return JSON.stringify({ min:LIVE.min, phase:LIVE.phase, elferStep:LIVE.elferStep, pausen:LIVE.pausen, pauseMi:LIVE.pauseMi,
-    hzRest:LIVE.hzRest, hzHalten:LIVE.hzHalten, speed:UI.speed, saison:S.saison, termin:S.termin,
+    hzRest:LIVE.hzRest, hzHalten:LIVE.hzHalten, speed:UI.speed, saison:S.saison, termin:S.termin, emo:mpEmoAktuell(),
     spiele:LIVE.spiele.filter(m=>m.live).map(m=>({ h:m.h, a:m.a, th:m.th, ta:m.ta, label:m.label, art:m.art, min:m.min, col:m.col, colAlt:m.colAlt,
       bes:m.bes, by:m.by, danger:m.danger, lh:m.lh, la:m.la, fh:m.fh, fa:m.fa, ah:m.ah, aa:m.aa, wechsel:m.wechsel, raus:m.raus||null,
       wunder:!!m.wunder, elfer:m.elfer, ie:m.ie, sieger:m.sieger, ko:m.ko, neutral:m.neutral, final:m.final, strafen:m.strafen,
@@ -6077,7 +6093,16 @@ function mpLiveEmpfangen(text){
   if(!text){ if(LIVE){ LIVE=null; render(); } return; }
   let p; try{ p=JSON.parse(text); }catch(e){ return; }
   if(!S||p.saison!==S.saison||p.termin!==S.termin){ return; }
+  if(p.countdown){
+    if(LIVE) return;
+    const n=Math.max(1,Math.min(9,Math.round(Number(p.countdown))||1));
+    UI.overlay=()=>countdownHtml(n); render(); try{ navigator.vibrate&&navigator.vibrate(60); }catch(e){}
+    clearTimeout(MP.cdTimer); MP.cdTimer=setTimeout(()=>{ if(!LIVE&&UI.overlay&&UI.gast){ UI.overlay=null; render(); } },4000);
+    return;
+  }
+  clearTimeout(MP.cdTimer);
   const alt=LIVE&&LIVE.spiele?LIVE:null;
+  for(const x of Array.isArray(p.emo)?p.emo:[]){ if(!x||MP.emoGesehen.has(x.id)) continue; MP.emoGesehen.add(x.id); if(alt) emoZeigen(x.e,x.n); }
   const spiele=p.spiele.map(m=>{ const v=alt&&alt.spiele.find(x=>x.h===m.h&&x.a===m.a);
     if(v) for(const k of ['_b0','_b1','_bes0','_bes1','_bmin','_p0','_p1']) if(v[k]!==undefined) m[k]=v[k];
     return m; });
@@ -6091,6 +6116,59 @@ function mpLiveHalten(){
   if(!LIVE||LIVE.phase!=='halbzeit'||LIVE.hzHalten) return;
   const key=S.saison+'|'+S.termin; if(MP.haltenFuer===key) return;
   MP.haltenFuer=key; LIVE.hzHalten=true; mpAktionSenden({live:'halten'});
+}
+// ---------- Emojis während der Konferenz ----------
+// Jeder im Raum (auch Zuschauer) kann ein Emoji schicken; es fliegt auf allen Geräten hoch.
+// Übertragen wird nur die Nummer aus EMOJIS, nie freier Text.
+const EMOJIS=['⚽','🎉','😱','😭','👏','😂'];
+const EMO_HALTEN=4000, EMO_ABSTAND=500;
+MP.emos=[]; MP.emoGesehen=new Set(); MP.emoZuletzt={}; MP.emoNr=0;
+function emoZeigen(nr,name){
+  const e=EMOJIS[Number(nr)]; if(!e) return;
+  let eb=document.getElementById('emoEbene');
+  if(!eb){ eb=document.createElement('div'); eb.id='emoEbene'; eb.setAttribute('aria-hidden','true'); document.body.appendChild(eb); }
+  const d=document.createElement('div'); d.className='emoFlug';
+  d.style.left=(8+Math.random()*76)+'%';
+  d.innerHTML=`<b>${e}</b>${name?`<span>${h(mpName(name))}</span>`:''}`;
+  eb.appendChild(d); setTimeout(()=>d.remove(),2700);
+}
+const emoName = uid => { const m=S&&S.manager.find(x=>x.online===uid); return m?m.name:mpName(MP.mitglieder[uid])||'Gast'; };
+const leiterName = () => { const m=S&&S.manager.find(x=>!x.online); return m?m.name:'Spielleiter'; };
+// Spielleiter: neues Emoji merken, selbst zeigen und mit dem nächsten Live-Paket an alle schicken
+function mpEmoMerken(id,nr,name){
+  if(!LIVE||!EMOJIS[nr]) return;
+  MP.emos.push({id:String(id).slice(0,40), e:nr, n:mpName(name), t:Date.now()});
+  if(MP.emos.length>10) MP.emos.shift();
+  MP.emoGesehen.add(String(id).slice(0,40));
+  emoZeigen(nr,name); renderKonferenz();
+}
+function mpEmoVonHandy(uid,msg){
+  const nr=Number(msg.e), jetzt=Date.now();
+  if(!Number.isInteger(nr)||!EMOJIS[nr]||!MP.mitglieder[uid]) return;
+  if(jetzt-(MP.emoZuletzt[uid]||0)<EMO_ABSTAND) return;
+  MP.emoZuletzt[uid]=jetzt;
+  mpEmoMerken(String(msg.id||uid+jetzt),nr,emoName(uid));
+}
+function mpEmoAktuell(){ const grenze=Date.now()-EMO_HALTEN; MP.emos=MP.emos.filter(x=>x.t>=grenze); return MP.emos.map(({id,e,n})=>({id,e,n})); }
+function emoKlick(v){
+  const nr=Number(v); if(!LIVE||!EMOJIS[nr]) return;
+  const jetzt=Date.now(); if(jetzt-(MP.emoEigen||0)<EMO_ABSTAND) return; MP.emoEigen=jetzt;
+  if(UI.gast){
+    const id=MP.uid.slice(0,12)+'-'+(++MP.emoNr)+'-'+jetzt.toString(36);
+    MP.emoGesehen.add(id); emoZeigen(nr,emoName(MP.uid));
+    const key=String(jetzt).padStart(14,'0')+String(++mpAktionNr%1000).padStart(3,'0');
+    MP.D.set(mpRef(`aktionen/${MP.uid}/${key}`),JSON.stringify({live:'emo',e:nr,id})).catch(e=>{ console.error(e); toast('Senden hat nicht geklappt.'); });
+  } else if(MP.rolle==='leiter') mpEmoMerken('L-'+(++MP.emoNr)+'-'+jetzt.toString(36),nr,leiterName());
+}
+// Die Leiste liegt außerhalb der Konferenz, damit sie beim Neuzeichnen nicht ersetzt wird (sonst gehen Tipper verloren).
+function emoLeisteEinsetzen(){
+  const k=document.getElementById('konf');
+  const an=!!(LIVE&&k)&&(UI.gast||(MP.rolle==='leiter'&&Object.keys(MP.mitglieder||{}).some(u=>u!==MP.uid)));
+  if(k) k.classList.toggle('mitEmo',an);
+  let l=document.getElementById('emoLeiste');
+  if(!an){ if(l) l.remove(); return; }
+  if(!l){ l=document.createElement('div'); l.id='emoLeiste'; l.className='emoLeiste';
+    l.innerHTML=EMOJIS.map((e,i)=>`<button type="button" data-a="emo" data-v="${i}" aria-label="Emoji ${e} senden">${e}</button>`).join(''); document.body.appendChild(l); }
 }
 function gastLive(name,el){
   const mitspieler=MP.gastRolle==='mitspieler'&&eigenerMi()>=0;
@@ -6113,9 +6191,42 @@ const konfListeOffen = () => { const a=document.activeElement, k=document.getEle
   renderKonferenz=function(){
     if(konfListeOffen()) MP.konfSpaeter=true;
     else { MP.konfSpaeter=false; altRK();
-      if(UI.gast){ const k=document.getElementById('konf'), b=k&&k.querySelector('[data-a=liveRest]'); if(b&&b.parentElement) b.parentElement.remove(); } }
+      if(UI.gast){ const k=document.getElementById('konf'), b=k&&k.querySelector('[data-a=liveRest]'); if(b&&b.parentElement) b.parentElement.remove(); }
+      emoLeisteEinsetzen(); }
     if(MP.rolle==='leiter') mpLiveSenden(); };
-  liveEnde=function(){ altLE(); if(MP.rolle==='leiter') mpLiveSenden(); };
+  const altRender=render;
+  render=function(){ altRender(); if(!MP.replay&&!MP.trocken) emoLeisteEinsetzen(); };
+  liveEnde=function(){ altLE(); MP.emos=[]; if(MP.rolle==='leiter') mpLiveSenden(); };
+  // Mit Handys im Raum zählt der Spielleiter 4-3-2-1. Die Handys bekommen jede Zahl eine halbe Sekunde
+  // vor dem Spielleiter (Zahl n-1 kurz nach n): Mit der Netz-Verzögerung zeigen dann alle ungefähr gleichzeitig dieselbe Zahl.
+  const CD_VORSPRUNG=500;
+  const handysImRaum = () => MP.rolle==='leiter'&&!!MP.raum&&Object.keys(MP.mitglieder||{}).some(u=>u!==MP.uid);
+  countdownVorlauf=()=>handysImRaum()?1:0;
+  countdownMelden=function(n){
+    if(!handysImRaum()||!MP.D||!S||n-1<1) return;
+    const wert=JSON.stringify({countdown:n-1, saison:S.saison, termin:S.termin});
+    clearTimeout(MP.cdSende);
+    MP.cdSende=setTimeout(()=>{
+      clearTimeout(MP.liveTimer); MP.liveTimer=null; MP.liveZuletzt=Date.now(); MP.liveLetzt=wert;
+      MP.D.set(mpRef('live'),wert).catch(e=>console.error(e));
+    },CD_VORSPRUNG);
+  };
+  // Spielleiter: Vereine, die am Handy gespielt werden, drücken selbst „Bereit“.
+  const altBereit=ACT.bereit;
+  const amHandy = m => !!(m&&m.online&&MP.rolle==='leiter'&&MP.mitglieder[m.online]);
+  ACT.bereit=function(...a){
+    if(UI.gast||MP.replay||MP.rolle!=='leiter') return altBereit.apply(this,a);
+    const m=S.manager[S.aktiv];
+    if(amHandy(m)) return toast(`${m.name} spielt am Handy und drückt dort selbst „Bereit“.`);
+    m.bereit=!m.bereit;
+    if(m.bereit){
+      const naechster=S.manager.findIndex(x=>!x.bereit&&!amHandy(x));
+      if(naechster>=0){ S.aktiv=naechster; speichern(); render(); return toast(`Jetzt ist ${S.manager[naechster].name} dran.`); }
+      const handys=S.manager.filter(x=>!x.bereit&&amHandy(x)).map(x=>x.name);
+      if(handys.length){ speichern(); render(); return toast(`Warte auf ${handys.join(', ')} (Handy).`); }
+    }
+    speichern(); render();
+  };
   // Spielt ein Handy live mit, dauert die Halbzeit dreimal so lang: Der Stand kommt dort etwas später an.
   halbzeitDauer=function(){
     const handy=MP.rolle==='leiter'&&LIVE&&S.manager.some(mg=>mg.online&&LIVE.spiele.some(m=>m.live&&(m.h===mg.club||m.a===mg.club)));
@@ -6211,6 +6322,7 @@ function renderBeitritt(){
     mpBeitreten(){ mpBeitreten(); },
     mpNochmal(){ mpAbmelden(); MP.phase=null; mpGastStart(); },
     mpVerlassen(){ mpVerlassen(); },
+    emo(v){ emoKlick(v); },
     mpESet(v){ const [k,x]=String(v).split('|'); if(!MP.ein) mpEinstiegStart(); if(k==='gruenden') MP.ein.gruenden=x==='1'; else MP.ein[k]=x; render(); },
     mpEinsteigen(){ if(!MP.ein) return; const E={...MP.ein};
       for(const el of document.querySelectorAll('[data-c=mpE]')) E[el.dataset.v]=el.value;
